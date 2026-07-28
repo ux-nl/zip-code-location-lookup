@@ -1,18 +1,24 @@
 {
-    "name": "baspa/zip-code-location-lookup",
-    "description": "y",
+    "name": "ux-nl/zip-code-location-lookup",
+    "description": "Look up a Dutch address and its coordinates by postcode and house number",
     "keywords": [
-        "Baspa",
+        "ux-nl",
         "laravel",
+        "postcode",
         "zip-code-location-lookup"
     ],
-    "homepage": "https://github.com/baspa/zip-code-location-lookup",
+    "homepage": "https://github.com/ux-nl/zip-code-location-lookup",
     "license": "MIT",
     "authors": [
         {
             "name": "Baspa",
             "email": "hello@baspa.dev",
-            "role": "Developer"
+            "role": "Original author"
+        },
+        {
+            "name": "Mark van Eijk",
+            "homepage": "https://ux.nl",
+            "role": "Maintainer"
         }
     ],
     "require": {

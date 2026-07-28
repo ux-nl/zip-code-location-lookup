@@ -1,18 +1,18 @@
 # Zip Code Location Lookup
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/baspa/zip-code-location-lookup.svg?style=flat-square)](https://packagist.org/packages/baspa/zip-code-location-lookup)
-[![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/baspa/zip-code-location-lookup/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/baspa/zip-code-location-lookup/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://img.shields.io/github/actions/workflow/status/baspa/zip-code-location-lookup/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square)](https://github.com/baspa/zip-code-location-lookup/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/baspa/zip-code-location-lookup.svg?style=flat-square)](https://packagist.org/packages/baspa/zip-code-location-lookup)
+[![GitHub Tests Action Status](https://img.shields.io/github/actions/workflow/status/ux-nl/zip-code-location-lookup/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/ux-nl/zip-code-location-lookup/actions?query=workflow%3Arun-tests+branch%3Amain)
+[![GitHub Code Style Action Status](https://img.shields.io/github/actions/workflow/status/ux-nl/zip-code-location-lookup/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square)](https://github.com/ux-nl/zip-code-location-lookup/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
 
 This package allows you to lookup the geographic location of a zip code by combining the [Postcode.tech](https://postcode.tech/) API with the [Google Geocoding API](https://developers.google.com/maps/documentation/geocoding/overview).
+
+> Maintained by [UX Nederland](https://ux.nl). Originally written by [Baspa](https://github.com/baspa/zip-code-location-lookup) and continued here under the same MIT license. The PHP namespace is still `Baspa\ZipCodeLocationLookup` so upstream changes stay easy to merge.
 
 ## Installation
 
 You can install the package via composer:
 
 ```bash
-composer require baspa/zip-code-location-lookup
+composer require ux-nl/zip-code-location-lookup
 ```
 
 Then add the Google Maps API and Postcode.tech API keys to your `.env` file:
