@@ -2,12 +2,24 @@
 
 namespace Baspa\ZipCodeLocationLookup;
 
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class ZipCodeLocationLookup
 {
+    /**
+     * Harde grens per uitgaande call. Zonder timeout geldt Laravel's default
+     * van 30s, en dit pad doet er in het slechtste geval vijf achter elkaar —
+     * ruim voorbij wat een blur in een adresformulier mag kosten. Postcode.tech
+     * antwoordt zelf in ongeveer een seconde.
+     */
+    private const REQUEST_TIMEOUT_SECONDS = 5;
+
+    private const CONNECT_TIMEOUT_SECONDS = 3;
+
     protected string $googleMapsApiKey;
 
     protected string $postcodeTechApiKey;
@@ -17,18 +29,31 @@ class ZipCodeLocationLookup
     public function __construct(bool $useGoogleMaps = true)
     {
         $this->useGoogleMaps = $useGoogleMaps;
-        $this->postcodeTechApiKey = config('services.postcode_tech.api_key');
+        // Casten vóór de toewijzing: de property is `string`, dus een
+        // ontbrekende sleutel gaf een TypeError op deze regel in plaats van de
+        // InvalidArgumentException hieronder, die uitlegt wat er mist.
+        $this->postcodeTechApiKey = (string) config('services.postcode_tech.api_key');
 
         if (empty($this->postcodeTechApiKey)) {
             throw new InvalidArgumentException('Postcode.tech API key must be configured in services config');
         }
 
         if ($useGoogleMaps) {
-            $this->googleMapsApiKey = config('services.google.api_key');
+            $this->googleMapsApiKey = (string) config('services.google.api_key');
             if (empty($this->googleMapsApiKey)) {
                 throw new InvalidArgumentException('Google Maps API key must be configured in services config');
             }
         }
+    }
+
+    /**
+     * Elke uitgaande call van deze klasse loopt hierlangs, zodat de timeout op
+     * één plek staat.
+     */
+    protected function request(): PendingRequest
+    {
+        return Http::timeout(self::REQUEST_TIMEOUT_SECONDS)
+            ->connectTimeout(self::CONNECT_TIMEOUT_SECONDS);
     }
 
     /**
@@ -77,8 +102,22 @@ class ZipCodeLocationLookup
 
         try {
             $data = $this->getPostcodeTechResponse($postcode, $number);
-        } catch (\Throwable) {
-            // Een storing bij Postcode.tech mag de lookup niet blokkeren.
+        } catch (\Throwable $e) {
+            // Een storing bij Postcode.tech mag de lookup niet blokkeren, maar
+            // wel zichtbaar zijn. Hierna valt de lookup terug op geocoding, en
+            // dat pad levert vaker geen straat of een straat uit de verkeerde
+            // plaats. Zonder logregel is een verlopen sleutel of een 429 — de
+            // limiet is 60 per minuut — niet te onderscheiden van een adres dat
+            // gewoon niet bestaat.
+            //
+            // Een 404 komt hier niet langs: die geeft getPostcodeTechResponse()
+            // als null terug, want een onbekende combinatie is geen storing.
+            Log::warning('Postcode.tech lookup failed, falling back to Google Maps', [
+                'postcode' => $postcode,
+                'number' => $number,
+                'exception' => $e->getMessage(),
+            ]);
+
             return null;
         }
 
@@ -162,7 +201,7 @@ class ZipCodeLocationLookup
      */
     protected function getPostcodeTechResponse(string $zipCode, int $number): ?array
     {
-        $response = Http::withHeaders([
+        $response = $this->request()->withHeaders([
             'Authorization' => 'Bearer '.$this->postcodeTechApiKey,
         ])->get('https://postcode.tech/api/v1/postcode/full', [
             'postcode' => $this->normalizePostalCode($zipCode),
@@ -204,7 +243,7 @@ class ZipCodeLocationLookup
 
             // Strategy 1: Google Places API (Find Place From Text)
             // This is more accurate for text-based queries where Geocoding API returns a postcode centroid
-            $placesResponse = Http::get('https://maps.googleapis.com/maps/api/place/findplacefromtext/json', [
+            $placesResponse = $this->request()->get('https://maps.googleapis.com/maps/api/place/findplacefromtext/json', [
                 'key' => $this->googleMapsApiKey,
                 'input' => $query,
                 'inputtype' => 'textquery',
@@ -217,7 +256,7 @@ class ZipCodeLocationLookup
                 $placeId = $placesData['candidates'][0]['place_id'];
 
                 // Fetch Place Details to get address components
-                $detailsResponse = Http::get('https://maps.googleapis.com/maps/api/place/details/json', [
+                $detailsResponse = $this->request()->get('https://maps.googleapis.com/maps/api/place/details/json', [
                     'key' => $this->googleMapsApiKey,
                     'place_id' => $placeId,
                     'fields' => 'address_component,formatted_address,geometry',
@@ -255,7 +294,7 @@ class ZipCodeLocationLookup
             // Strategy 2: Reverse Geocoding (Fallback if Places failed or mismatched)
             // This snaps to the nearest street from the centroid coordinates.
             if (! $foundViaPlaces && ! empty($result['lat']) && ! empty($result['lng'])) {
-                $reverseResponse = Http::get('https://maps.googleapis.com/maps/api/geocode/json', [
+                $reverseResponse = $this->request()->get('https://maps.googleapis.com/maps/api/geocode/json', [
                     'key' => $this->googleMapsApiKey,
                     'latlng' => $result['lat'].','.$result['lng'],
                 ]);
@@ -302,7 +341,7 @@ class ZipCodeLocationLookup
      */
     protected function geocode(string $query): ?array
     {
-        $response = Http::get('https://maps.googleapis.com/maps/api/geocode/json', [
+        $response = $this->request()->get('https://maps.googleapis.com/maps/api/geocode/json', [
             'key' => $this->googleMapsApiKey,
             'address' => $query,
             'components' => 'country:NL',
