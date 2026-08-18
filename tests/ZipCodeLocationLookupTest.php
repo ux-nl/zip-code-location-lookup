@@ -2,6 +2,7 @@
 
 use Baspa\ZipCodeLocationLookup\ZipCodeLocationLookup;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     config()->set('services.postcode_tech.api_key', 'postcode-tech-key');
@@ -237,3 +238,58 @@ it('requires Google Maps to be enabled', function () {
     expect(fn () => (new ZipCodeLocationLookup(false))->lookup('4921JN', 20))
         ->toThrow(InvalidArgumentException::class, 'Google Maps is required for address lookup');
 });
+
+it('caps every outgoing request with a timeout', function () {
+    // Zonder timeout geldt Laravel's default van 30s per call, en het
+    // herstelpad hierboven doet er tot vijf achter elkaar.
+    $request = (new ReflectionMethod(ZipCodeLocationLookup::class, 'request'))
+        ->invoke(new ZipCodeLocationLookup);
+
+    expect($request->getOptions())
+        ->toHaveKey('timeout', 5)
+        ->toHaveKey('connect_timeout', 3);
+});
+
+it('logs a failing postcode.tech call before falling back to geocoding', function () {
+    // De terugval was stil, waardoor een verlopen sleutel of een 429 (de limiet
+    // is 60 per minuut) niet te onderscheiden was van een onbekend adres —
+    // terwijl het geocoding-pad vaker geen of de verkeerde straat oplevert.
+    Log::spy();
+
+    Http::fake([
+        'postcode.tech/*' => Http::response('too many requests', 429),
+        'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
+    ]);
+
+    (new ZipCodeLocationLookup)->lookup('4921JN', 20);
+
+    Log::shouldHaveReceived('warning')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => $message === 'Postcode.tech lookup failed, falling back to Google Maps'
+            && $context['postcode'] === '4921JN'
+            && $context['number'] === 20);
+});
+
+it('does not log a 404 from postcode.tech as a failure', function () {
+    // Een onbekende combinatie is een verwachte uitkomst, geen storing.
+    Log::spy();
+
+    Http::fake([
+        'postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404),
+        'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
+    ]);
+
+    (new ZipCodeLocationLookup)->lookup('4921JN', 20);
+
+    Log::shouldNotHaveReceived('warning');
+});
+
+it('explains which API key is missing instead of failing on a type error', function (string $key, string $expected) {
+    config()->set($key, null);
+
+    expect(fn () => new ZipCodeLocationLookup)
+        ->toThrow(InvalidArgumentException::class, $expected);
+})->with([
+    ['services.postcode_tech.api_key', 'Postcode.tech API key must be configured in services config'],
+    ['services.google.api_key', 'Google Maps API key must be configured in services config'],
+]);
