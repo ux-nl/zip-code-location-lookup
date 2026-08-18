@@ -3,6 +3,7 @@
 use Baspa\ZipCodeLocationLookup\ZipCodeLocationLookup;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Psr\Log\LoggerInterface;
 
 beforeEach(function () {
     config()->set('services.postcode_tech.api_key', 'postcode-tech-key');
@@ -254,7 +255,10 @@ it('logs a failing postcode.tech call before falling back to geocoding', functio
     // De terugval was stil, waardoor een verlopen sleutel of een 429 (de limiet
     // is 60 per minuut) niet te onderscheiden was van een onbekend adres —
     // terwijl het geocoding-pad vaker geen of de verkeerde straat oplevert.
-    Log::spy();
+    // De spy zelf vasthouden in plaats van Log::spy() met
+    // Log::shouldHaveReceived(): op oudere Laravel-versies geeft Facade::spy()
+    // null terug, waardoor die helpers daar onbruikbaar zijn.
+    Log::swap($logger = Mockery::spy(LoggerInterface::class));
 
     Http::fake([
         'postcode.tech/*' => Http::response('too many requests', 429),
@@ -263,7 +267,7 @@ it('logs a failing postcode.tech call before falling back to geocoding', functio
 
     (new ZipCodeLocationLookup)->lookup('4921JN', 20);
 
-    Log::shouldHaveReceived('warning')
+    $logger->shouldHaveReceived('warning')
         ->once()
         ->withArgs(fn (string $message, array $context): bool => $message === 'Postcode.tech lookup failed, falling back to Google Maps'
             && $context['postcode'] === '4921JN'
@@ -272,7 +276,10 @@ it('logs a failing postcode.tech call before falling back to geocoding', functio
 
 it('does not log a 404 from postcode.tech as a failure', function () {
     // Een onbekende combinatie is een verwachte uitkomst, geen storing.
-    Log::spy();
+    // De spy zelf vasthouden in plaats van Log::spy() met
+    // Log::shouldHaveReceived(): op oudere Laravel-versies geeft Facade::spy()
+    // null terug, waardoor die helpers daar onbruikbaar zijn.
+    Log::swap($logger = Mockery::spy(LoggerInterface::class));
 
     Http::fake([
         'postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404),
@@ -281,7 +288,7 @@ it('does not log a 404 from postcode.tech as a failure', function () {
 
     (new ZipCodeLocationLookup)->lookup('4921JN', 20);
 
-    Log::shouldNotHaveReceived('warning');
+    $logger->shouldNotHaveReceived('warning');
 });
 
 it('explains which API key is missing instead of failing on a type error', function (string $key, string $expected) {
