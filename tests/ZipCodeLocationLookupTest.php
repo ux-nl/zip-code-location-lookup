@@ -1,6 +1,8 @@
 <?php
 
+use Baspa\ZipCodeLocationLookup\Exceptions\AddressNotFoundException;
 use Baspa\ZipCodeLocationLookup\ZipCodeLocationLookup;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
@@ -138,9 +140,32 @@ it('skips postcode.tech for a postal code that is not Dutch', function () {
     Http::assertNotSent(fn ($request) => str_contains($request->url(), 'postcode.tech'));
 });
 
-it('falls back to geocoding when postcode.tech does not know the combination', function () {
+it('reports an unknown combination instead of falling back to geocoding', function () {
+    // Regression: na een 404 viel de lookup terug op Google, en dat "vond" voor
+    // een niet-bestaand huisnummer altijd iets — 1012JS 999 werd de Dam in
+    // Amsterdam, 9423PE gaf wisselend Hoogersmilde of Geeuwenbrug.
     Http::fake([
         'postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404),
+        'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
+    ]);
+
+    expect(fn () => (new ZipCodeLocationLookup)->lookup('4921 JN', 999))
+        ->toThrow(AddressNotFoundException::class, 'No address found for postcode 4921JN and house number 999');
+
+    Http::assertNotSent(fn ($request) => str_contains($request->url(), 'googleapis.com'));
+});
+
+it('keeps an unknown combination catchable as an invalid argument', function () {
+    // Bestaande aanroepers vangen InvalidArgumentException af.
+    Http::fake(['postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404)]);
+
+    expect(fn () => (new ZipCodeLocationLookup)->lookup('4921JN', 999))
+        ->toThrow(InvalidArgumentException::class);
+});
+
+it('falls back to geocoding when postcode.tech cannot be reached', function () {
+    Http::fake([
+        'postcode.tech/*' => fn () => throw new ConnectionException('cURL error 28: Operation timed out'),
         'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
     ]);
 
@@ -170,7 +195,7 @@ it('keeps the postcode when recovering a street name through reverse geocoding',
         $url = urldecode($request->url());
 
         return match (true) {
-            str_contains($url, 'postcode.tech') => Http::response(['message' => 'No result for this combination.'], 404),
+            str_contains($url, 'postcode.tech') => Http::response('service unavailable', 503),
             str_contains($url, 'findplacefromtext') => Http::response(['status' => 'ZERO_RESULTS', 'candidates' => []]),
             str_contains($url, 'latlng=') => Http::response(streetAddress('Zilverschoon', 'Made', '10', '4921 JN', 51.6780824, 4.7815545)),
             str_contains($url, 'Zilverschoon 20, 4921JN Made') => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6774583, 4.7817044)),
@@ -203,7 +228,7 @@ it('rejects a Places candidate that carries no postal code', function () {
         $url = urldecode($request->url());
 
         return match (true) {
-            str_contains($url, 'postcode.tech') => Http::response(['message' => 'No result for this combination.'], 404),
+            str_contains($url, 'postcode.tech') => Http::response('service unavailable', 503),
             str_contains($url, 'findplacefromtext') => Http::response(['status' => 'OK', 'candidates' => [['place_id' => 'apeldoorn-place']]]),
             str_contains($url, 'place/details') => Http::response($placeWithoutPostalCode),
             str_contains($url, 'latlng=') => Http::response(streetAddress('Zilverschoon', 'Made', '10', '4921 JN', 51.6780824, 4.7815545)),
@@ -222,7 +247,7 @@ it('rejects a Places candidate that carries no postal code', function () {
 
 it('reads address components whose type is not listed first', function () {
     Http::fake([
-        'postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404),
+        'postcode.tech/*' => Http::response('service unavailable', 503),
         'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
     ]);
 
@@ -281,12 +306,10 @@ it('does not log a 404 from postcode.tech as a failure', function () {
     // null terug, waardoor die helpers daar onbruikbaar zijn.
     Log::swap($logger = Mockery::spy(LoggerInterface::class));
 
-    Http::fake([
-        'postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404),
-        'maps.googleapis.com/*' => Http::response(streetAddress('Zilverschoon', 'Made', '20', '4921 JN', 51.6775, 4.7817)),
-    ]);
+    Http::fake(['postcode.tech/*' => Http::response(['message' => 'No result for this combination.'], 404)]);
 
-    (new ZipCodeLocationLookup)->lookup('4921JN', 20);
+    expect(fn () => (new ZipCodeLocationLookup)->lookup('4921JN', 20))
+        ->toThrow(AddressNotFoundException::class);
 
     $logger->shouldNotHaveReceived('warning');
 });
