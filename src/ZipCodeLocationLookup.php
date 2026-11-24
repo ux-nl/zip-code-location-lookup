@@ -2,6 +2,7 @@
 
 namespace Baspa\ZipCodeLocationLookup;
 
+use Baspa\ZipCodeLocationLookup\Exceptions\AddressNotFoundException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -59,6 +60,7 @@ class ZipCodeLocationLookup
     /**
      * @return array<string, mixed>
      *
+     * @throws AddressNotFoundException when Postcode.tech does not know the combination
      * @throws InvalidArgumentException
      */
     public function lookup(string $zipCode, int $number): array
@@ -76,6 +78,11 @@ class ZipCodeLocationLookup
         // postcode only yields a centroid, which then has to be recovered from
         // through reverse geocoding — and Dutch street names repeat across the
         // country, so that recovery can land in the wrong city entirely.
+        //
+        // When Postcode.tech answers that the combination does not exist, that
+        // answer is final: geocoding a non-existent house number always "finds"
+        // something nearby, so falling back would turn a typo into a wrong
+        // address. Google is only used when Postcode.tech cannot be reached.
         $address = $this->lookupViaPostcodeTech($zipCode, $number);
 
         if ($address !== null) {
@@ -87,10 +94,12 @@ class ZipCodeLocationLookup
 
     /**
      * Resolve a Dutch postcode and house number through Postcode.tech. Returns
-     * null when the postcode is not Dutch, the combination is unknown, or the
-     * API is unreachable, so the caller can fall back to geocoding.
+     * null when the postcode is not Dutch or the API is unreachable, so the
+     * caller can fall back to geocoding.
      *
      * @return array<string, mixed>|null
+     *
+     * @throws AddressNotFoundException when Postcode.tech does not know the combination
      */
     protected function lookupViaPostcodeTech(string $zipCode, int $number): ?array
     {
@@ -112,6 +121,7 @@ class ZipCodeLocationLookup
             //
             // Een 404 komt hier niet langs: die geeft getPostcodeTechResponse()
             // als null terug, want een onbekende combinatie is geen storing.
+            // Die wordt hieronder als AddressNotFoundException gegooid.
             Log::warning('Postcode.tech lookup failed, falling back to Google Maps', [
                 'postcode' => $postcode,
                 'number' => $number,
@@ -121,7 +131,12 @@ class ZipCodeLocationLookup
             return null;
         }
 
-        if ($data === null || empty($data['street']) || empty($data['city'])) {
+        // Buiten de try: deze uitkomst mag niet als storing worden geslikt.
+        if ($data === null) {
+            throw AddressNotFoundException::forCombination($postcode, $number);
+        }
+
+        if (empty($data['street']) || empty($data['city'])) {
             return null;
         }
 
